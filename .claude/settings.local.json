@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Bash(test:*)",
+      "Bash(chmod:*)"
+    ]
+  }
+}
