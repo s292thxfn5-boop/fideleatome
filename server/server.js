@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware CORS
 app.use(cors({
-  origin: '*', // Autoriser toutes les origines en dev
+  origin: '*',
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
@@ -44,6 +44,26 @@ app.options('*', (req, res) => {
   res.sendStatus(200);
 });
 
+// Initialiser la base de données (pour Vercel serverless)
+let dbInitialized = false;
+async function ensureDbInitialized() {
+  if (!dbInitialized) {
+    await initDatabase();
+    dbInitialized = true;
+  }
+}
+
+// Middleware pour initialiser la DB avant chaque requête
+app.use(async (req, res, next) => {
+  try {
+    await ensureDbInitialized();
+    next();
+  } catch (err) {
+    console.error('❌ Failed to initialize database:', err);
+    res.status(500).json({ error: 'Database initialization failed' });
+  }
+});
+
 // Route de test
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'FideleAtome API is running' });
@@ -64,11 +84,9 @@ app.use(express.static(clientBuildPath));
 
 // Toutes les routes non-API renvoient vers index.html (pour React Router)
 app.get('*', (req, res) => {
-  // Si c'est une route API non trouvée, renvoyer 404 JSON
   if (req.path.startsWith('/api')) {
     return res.status(404).json({ error: 'Route not found' });
   }
-  // Sinon, servir index.html pour le routing React
   res.sendFile(path.join(clientBuildPath, 'index.html'));
 });
 
@@ -81,16 +99,20 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Initialiser la base de données puis démarrer le serveur
-initDatabase()
-  .then(() => {
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
-      console.log(`🌐 Network: http://192.168.1.5:${PORT}`);
-      console.log(`📝 Environment: ${process.env.NODE_ENV}`);
+// Si lancé directement (pas Vercel), démarrer le serveur classique
+if (process.env.VERCEL !== '1') {
+  initDatabase()
+    .then(() => {
+      app.listen(PORT, '0.0.0.0', () => {
+        console.log(`🚀 Server running on http://localhost:${PORT}`);
+        console.log(`📝 Environment: ${process.env.NODE_ENV}`);
+      });
+    })
+    .catch((err) => {
+      console.error('❌ Failed to initialize database:', err);
+      process.exit(1);
     });
-  })
-  .catch((err) => {
-    console.error('❌ Failed to initialize database:', err);
-    process.exit(1);
-  });
+}
+
+// Export pour Vercel serverless
+module.exports = app;
