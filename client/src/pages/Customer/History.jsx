@@ -235,7 +235,7 @@ function History() {
             </div>
             <div>
               <p className="text-blue-700">Total récompenses</p>
-              <p className="text-2xl font-bold text-blue-900">{Math.floor((user?.profile?.totalPurchases || 0) / 15)}</p>
+              <p className="text-2xl font-bold text-blue-900">{user?.profile?.totalRewards || 0}</p>
             </div>
           </div>
         </div>
