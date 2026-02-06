@@ -160,10 +160,9 @@ export const addPoint = async (customerId, quantity = 1) => {
 
   // Créer les récompenses
   if (rewards.length > 0) {
-    const rewardRows = rewards.map(r => ({
+    const rewardRows = rewards.map(() => ({
       customer_id: customerId,
       business_id: businessProfileId,
-      reward_type: r.type,
     }));
 
     const { error: rewardsError } = await supabase
