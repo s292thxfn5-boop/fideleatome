@@ -3,7 +3,6 @@ import CryptoJS from 'crypto-js';
 import { getUser } from '../utils/storage';
 
 const QR_SECRET = 'fideleatome-qr-secret-2024';
-const POINTS_REQUIRED = 15;
 
 // Scanner un QR code client
 export const scanQRCode = async (qrData) => {
@@ -60,7 +59,17 @@ export const scanQRCode = async (qrData) => {
       throw new Error('Client non trouvé (ID: ' + customerId + '). Le client doit d\'abord créer un compte.');
     }
 
-    return { customer };
+    return {
+      customer: {
+        id: customer.id,
+        firstName: customer.first_name,
+        lastName: customer.last_name,
+        points: customer.points || 0,
+        totalPurchases: customer.total_purchases || 0,
+        totalRewards: customer.total_rewards || 0,
+        lastPurchaseDate: customer.last_purchase_date,
+      }
+    };
   } catch (error) {
     console.error('Erreur scan:', error);
     throw error;
@@ -72,7 +81,6 @@ export const addPoint = async (customerId, quantity = 1) => {
   const user = getUser();
   if (!user) throw new Error('Non authentifié');
 
-  // Utiliser le profil stocké localement
   const businessProfileId = user.profile?.id;
   if (!businessProfileId) throw new Error('Profil entreprise non trouvé');
 
@@ -86,19 +94,53 @@ export const addPoint = async (customerId, quantity = 1) => {
   if (customerError || !customer) throw new Error('Client non trouvé');
 
   const pointsToAdd = Math.max(1, Math.min(100, parseInt(quantity) || 1));
-  let currentPoints = (customer.points || 0) + pointsToAdd;
-  let rewardsEarned = 0;
 
-  // Calculer combien de récompenses ont été gagnées
-  while (currentPoints >= POINTS_REQUIRED) {
-    rewardsEarned++;
-    currentPoints -= POINTS_REQUIRED;
+  // Calculer les récompenses gagnées
+  // Cycle de 15 points : accessoire à 7, bobine à 15 (reset à 0)
+  let currentPoints = customer.points || 0;
+  let remaining = pointsToAdd;
+  const rewards = [];
+
+  while (remaining > 0) {
+    if (currentPoints < 7) {
+      const gap = 7 - currentPoints;
+      if (remaining >= gap) {
+        remaining -= gap;
+        currentPoints = 7;
+        rewards.push({ type: 'accessory', name: 'Accessoire offert' });
+      } else {
+        currentPoints += remaining;
+        remaining = 0;
+      }
+    }
+
+    if (remaining > 0 && currentPoints >= 7) {
+      const gap = 15 - currentPoints;
+      if (remaining >= gap) {
+        remaining -= gap;
+        currentPoints = 0;
+        rewards.push({ type: 'bobine', name: 'Bobine Bambu Lab' });
+      } else {
+        currentPoints += remaining;
+        remaining = 0;
+      }
+    }
   }
 
-  // Mettre à jour les points du client
+  const newTotalPurchases = (customer.total_purchases || 0) + pointsToAdd;
+  const newTotalRewards = (customer.total_rewards || 0) + rewards.length;
+  const now = new Date().toISOString();
+
+  // Mettre à jour le profil client
   const { error: updateError } = await supabase
     .from('customer_profiles')
-    .update({ points: currentPoints })
+    .update({
+      points: currentPoints,
+      total_purchases: newTotalPurchases,
+      total_rewards: newTotalRewards,
+      last_purchase_date: now,
+      first_purchase_date: customer.first_purchase_date || now
+    })
     .eq('id', customerId);
 
   if (updateError) throw new Error(updateError.message);
@@ -111,32 +153,45 @@ export const addPoint = async (customerId, quantity = 1) => {
       business_id: businessProfileId,
       points_added: pointsToAdd,
       is_reward: false,
-      purchase_date: new Date().toISOString(),
+      purchase_date: now,
     }]);
 
   if (purchaseError) throw new Error(purchaseError.message);
 
-  // Créer les récompenses si nécessaire
-  if (rewardsEarned > 0) {
-    const rewards = Array.from({ length: rewardsEarned }, () => ({
+  // Créer les récompenses
+  if (rewards.length > 0) {
+    const rewardRows = rewards.map(r => ({
       customer_id: customerId,
       business_id: businessProfileId,
-      points_used: POINTS_REQUIRED,
-      earned_date: new Date().toISOString(),
+      reward_type: r.type,
     }));
 
     const { error: rewardsError } = await supabase
       .from('rewards')
-      .insert(rewards);
+      .insert(rewardRows);
 
     if (rewardsError) throw new Error(rewardsError.message);
   }
 
+  // Construire le message
+  let message;
+  if (rewards.length > 0) {
+    message = `Félicitations ! ${rewards.map(r => r.name).join(' + ')}`;
+  } else {
+    const nextThreshold = currentPoints < 7 ? 7 : 15;
+    const remainingPts = nextThreshold - currentPoints;
+    const nextName = currentPoints < 7 ? 'Accessoire offert' : 'Bobine Bambu Lab';
+    const addedText = pointsToAdd > 1 ? `${pointsToAdd} points ajoutés` : 'Point ajouté';
+    message = `${addedText} ! ${currentPoints} points - Plus que ${remainingPts} pour ${nextName}`;
+  }
+
   return {
-    message: 'Points ajoutés avec succès',
+    message,
     pointsAdded: pointsToAdd,
     newPoints: currentPoints,
-    rewardsEarned,
+    totalPurchases: newTotalPurchases,
+    totalRewards: newTotalRewards,
+    rewardsEarned: rewards.length,
   };
 };
 
@@ -176,7 +231,17 @@ export const getCustomers = async (params = {}) => {
 
   if (error) throw new Error(error.message);
 
-  return { customers: customers || [] };
+  return {
+    customers: (customers || []).map(c => ({
+      id: c.id,
+      firstName: c.first_name,
+      lastName: c.last_name,
+      points: c.points || 0,
+      totalPurchases: c.total_purchases || 0,
+      totalRewards: c.total_rewards || 0,
+      lastPurchaseDate: c.last_purchase_date,
+    }))
+  };
 };
 
 // Obtenir les détails d'un client
@@ -205,7 +270,13 @@ export const getCustomerDetails = async (customerId) => {
 
   return {
     customer: {
-      ...customer,
+      id: customer.id,
+      firstName: customer.first_name,
+      lastName: customer.last_name,
+      points: customer.points || 0,
+      totalPurchases: customer.total_purchases || 0,
+      totalRewards: customer.total_rewards || 0,
+      lastPurchaseDate: customer.last_purchase_date,
       qrToken: qrData,
     },
   };
@@ -232,10 +303,11 @@ export const getBusinessStats = async () => {
     .eq('business_id', businessProfileId);
 
   // Calculer les statistiques
-  const uniqueCustomers = new Set(purchases.map(p => p.customer_id));
+  const purchaseList = purchases || [];
+  const uniqueCustomers = new Set(purchaseList.map(p => p.customer_id));
   const totalCustomers = uniqueCustomers.size;
 
-  const totalPurchases = purchases
+  const totalPurchases = purchaseList
     .filter(p => !p.is_reward)
     .reduce((sum, p) => sum + (p.points_added || 0), 0);
 
@@ -243,7 +315,7 @@ export const getBusinessStats = async () => {
 
   // Ventes aujourd'hui
   const today = new Date().toISOString().split('T')[0];
-  const todaySales = purchases
+  const todaySales = purchaseList
     .filter(p => !p.is_reward && p.purchase_date && p.purchase_date.startsWith(today))
     .reduce((sum, p) => sum + (p.points_added || 0), 0);
 

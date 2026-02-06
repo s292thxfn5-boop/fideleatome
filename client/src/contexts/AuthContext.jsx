@@ -1,6 +1,6 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import { supabase } from '../config/supabase';
 import { getProfile, logout as apiLogout } from '../api/auth';
+import { getToken, isTokenExpired, clearAuth } from '../utils/storage';
 
 const AuthContext = createContext();
 
@@ -13,20 +13,22 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // Vérifier si un utilisateur est connecté avec Supabase
-        const { data: { session } } = await supabase.auth.getSession();
+        const token = getToken();
 
-        if (!session) {
+        // Pas de token ou token expiré → pas connecté
+        if (!token || isTokenExpired(token)) {
+          clearAuth();
           setLoading(false);
           return;
         }
 
-        // Récupérer le profil complet
+        // Token valide → récupérer le profil complet depuis le serveur
         const profile = await getProfile();
         setUser(profile);
         setIsAuthenticated(true);
       } catch (error) {
         console.error('Error initializing auth:', error);
+        clearAuth();
         setUser(null);
         setIsAuthenticated(false);
       } finally {
@@ -35,26 +37,6 @@ export function AuthProvider({ children }) {
     };
 
     initAuth();
-
-    // Écouter les changements d'authentification
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
-        try {
-          const profile = await getProfile();
-          setUser(profile);
-          setIsAuthenticated(true);
-        } catch (error) {
-          console.error('Error fetching profile after sign in:', error);
-        }
-      } else if (event === 'SIGNED_OUT') {
-        setUser(null);
-        setIsAuthenticated(false);
-      }
-    });
-
-    return () => {
-      subscription?.unsubscribe();
-    };
   }, []);
 
   const loginUser = (userData) => {

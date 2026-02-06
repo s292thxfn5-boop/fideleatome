@@ -73,7 +73,8 @@ function Scanner() {
       setScannedCustomer({
         ...scannedCustomer,
         points: result.newPoints,
-        totalPurchases: result.totalPurchases
+        totalPurchases: result.totalPurchases,
+        totalRewards: result.totalRewards
       });
 
       // Réinitialiser après 3 secondes

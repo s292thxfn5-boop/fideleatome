@@ -29,38 +29,49 @@ class LoyaltyService {
         is_reward: 0
       });
 
-      // Calculer les nouveaux points
-      let currentPoints = customer.points + pointsToAdd;
-      const newTotalPurchases = customer.total_purchases + pointsToAdd;
-      const now = new Date().toISOString();
+      // Calculer les récompenses gagnées
+      // Cycle de 15 points : accessoire à 7, bobine à 15 (reset à 0)
+      let currentPoints = customer.points || 0;
+      let remaining = pointsToAdd;
+      const rewards = [];
 
-      let rewards = [];
-      let totalNewRewards = 0;
+      while (remaining > 0) {
+        if (currentPoints < REWARD_TIERS.ACCESSORY.points) {
+          const gap = REWARD_TIERS.ACCESSORY.points - currentPoints;
+          if (remaining >= gap) {
+            remaining -= gap;
+            currentPoints = REWARD_TIERS.ACCESSORY.points;
+            rewards.push({ type: 'accessory', name: REWARD_TIERS.ACCESSORY.name });
+          } else {
+            currentPoints += remaining;
+            remaining = 0;
+          }
+        }
 
-      // Vérifier les récompenses gagnées (du plus haut au plus bas)
-      while (currentPoints >= REWARD_TIERS.BOBINE.points) {
-        rewards.push(REWARD_TIERS.BOBINE.name);
-        totalNewRewards++;
-        currentPoints -= REWARD_TIERS.BOBINE.points;
-
-        await Reward.create({
-          customer_id: customerId,
-          business_id: businessId,
-          purchase_id: purchaseId,
-          reward_type: 'bobine'
-        });
+        if (remaining > 0 && currentPoints >= REWARD_TIERS.ACCESSORY.points) {
+          const gap = REWARD_TIERS.BOBINE.points - currentPoints;
+          if (remaining >= gap) {
+            remaining -= gap;
+            currentPoints = 0;
+            rewards.push({ type: 'bobine', name: REWARD_TIERS.BOBINE.name });
+          } else {
+            currentPoints += remaining;
+            remaining = 0;
+          }
+        }
       }
 
-      while (currentPoints >= REWARD_TIERS.ACCESSORY.points) {
-        rewards.push(REWARD_TIERS.ACCESSORY.name);
-        totalNewRewards++;
-        currentPoints -= REWARD_TIERS.ACCESSORY.points;
+      const newTotalPurchases = (customer.total_purchases || 0) + pointsToAdd;
+      const newTotalRewards = (customer.total_rewards || 0) + rewards.length;
+      const now = new Date().toISOString();
 
+      // Créer les récompenses en base
+      for (const reward of rewards) {
         await Reward.create({
           customer_id: customerId,
           business_id: businessId,
           purchase_id: purchaseId,
-          reward_type: 'accessory'
+          reward_type: reward.type
         });
       }
 
@@ -68,7 +79,7 @@ class LoyaltyService {
       await CustomerProfile.update(customerId, {
         points: currentPoints,
         total_purchases: newTotalPurchases,
-        total_rewards: customer.total_rewards + totalNewRewards,
+        total_rewards: newTotalRewards,
         last_purchase_date: now,
         first_purchase_date: customer.first_purchase_date || now
       });
@@ -77,26 +88,28 @@ class LoyaltyService {
         return {
           success: true,
           rewardEarned: true,
-          rewards: rewards,
+          rewards: rewards.map(r => r.name),
           newPoints: currentPoints,
           totalPurchases: newTotalPurchases,
-          totalRewards: customer.total_rewards + totalNewRewards,
-          message: `Félicitations ! ${rewards.join(' + ')}`
+          totalRewards: newTotalRewards,
+          message: `Félicitations ! ${rewards.map(r => r.name).join(' + ')}`
         };
       } else {
         const pointsAddedText = pointsToAdd > 1 ? `${pointsToAdd} points ajoutés` : 'Point ajouté';
-        const nextReward = currentPoints < REWARD_TIERS.ACCESSORY.points
-          ? { name: REWARD_TIERS.ACCESSORY.name, remaining: REWARD_TIERS.ACCESSORY.points - currentPoints }
-          : { name: REWARD_TIERS.BOBINE.name, remaining: REWARD_TIERS.BOBINE.points - currentPoints };
+        const nextThreshold = currentPoints < REWARD_TIERS.ACCESSORY.points
+          ? REWARD_TIERS.ACCESSORY
+          : REWARD_TIERS.BOBINE;
+        const remainingPts = nextThreshold.points - currentPoints;
 
         return {
           success: true,
           rewardEarned: false,
           newPoints: currentPoints,
-          remaining: nextReward.remaining,
-          nextReward: nextReward.name,
+          remaining: remainingPts,
+          nextReward: nextThreshold.name,
           totalPurchases: newTotalPurchases,
-          message: `${pointsAddedText} ! ${currentPoints} points - Plus que ${nextReward.remaining} pour ${nextReward.name}`
+          totalRewards: newTotalRewards,
+          message: `${pointsAddedText} ! ${currentPoints} points - Plus que ${remainingPts} pour ${nextThreshold.name}`
         };
       }
     } catch (error) {
