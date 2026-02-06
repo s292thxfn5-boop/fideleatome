@@ -235,7 +235,7 @@ async function login(req, res) {
     console.error('Login error:', error);
     res.status(500).json({
       error: 'Login failed',
-      message: process.env.NODE_ENV === 'development' ? error.message : undefined
+      message: error.message
     });
   }
 }
