@@ -282,6 +282,153 @@ export const getCustomerDetails = async (customerId) => {
   };
 };
 
+// Obtenir les achats d'un client pour ce business
+export const getCustomerPurchases = async (customerId) => {
+  const user = getUser();
+  if (!user) throw new Error('Non authentifié');
+
+  const businessProfileId = user.profile?.id;
+  if (!businessProfileId) throw new Error('Profil entreprise non trouvé');
+
+  const { data: purchases, error } = await supabase
+    .from('purchases')
+    .select('*')
+    .eq('customer_id', customerId)
+    .eq('business_id', businessProfileId)
+    .eq('is_reward', false)
+    .order('purchase_date', { ascending: false });
+
+  if (error) throw new Error(error.message);
+
+  return { purchases: purchases || [] };
+};
+
+// Recalculer le profil client à partir de tous ses achats
+const recalculateCustomerProfile = async (customerId) => {
+  // Récupérer TOUS les achats du client (tous business confondus)
+  const { data: allPurchases, error: purchasesError } = await supabase
+    .from('purchases')
+    .select('*')
+    .eq('customer_id', customerId)
+    .eq('is_reward', false)
+    .order('purchase_date', { ascending: true });
+
+  if (purchasesError) throw new Error(purchasesError.message);
+
+  const purchases = allPurchases || [];
+
+  // Calculer total_purchases
+  const totalPurchases = purchases.reduce((sum, p) => sum + (p.points_added || 0), 0);
+
+  // Rejouer le cycle de points pour calculer points actuels et total_rewards
+  let currentPoints = 0;
+  let totalRewards = 0;
+
+  for (const purchase of purchases) {
+    let remaining = purchase.points_added || 0;
+
+    while (remaining > 0) {
+      if (currentPoints < 7) {
+        const gap = 7 - currentPoints;
+        if (remaining >= gap) {
+          remaining -= gap;
+          currentPoints = 7;
+          totalRewards++;
+        } else {
+          currentPoints += remaining;
+          remaining = 0;
+        }
+      }
+
+      if (remaining > 0 && currentPoints >= 7) {
+        const gap = 15 - currentPoints;
+        if (remaining >= gap) {
+          remaining -= gap;
+          currentPoints = 0;
+          totalRewards++;
+        } else {
+          currentPoints += remaining;
+          remaining = 0;
+        }
+      }
+    }
+  }
+
+  // Déterminer first_purchase_date et last_purchase_date
+  const firstPurchaseDate = purchases.length > 0 ? purchases[0].purchase_date : null;
+  const lastPurchaseDate = purchases.length > 0 ? purchases[purchases.length - 1].purchase_date : null;
+
+  // Mettre à jour le profil client
+  const updateData = {
+    points: currentPoints,
+    total_purchases: totalPurchases,
+    total_rewards: totalRewards,
+  };
+  if (firstPurchaseDate) updateData.first_purchase_date = firstPurchaseDate;
+  if (lastPurchaseDate) updateData.last_purchase_date = lastPurchaseDate;
+
+  const { error: updateError } = await supabase
+    .from('customer_profiles')
+    .update(updateData)
+    .eq('id', customerId);
+
+  if (updateError) throw new Error(updateError.message);
+
+  return { points: currentPoints, totalPurchases, totalRewards };
+};
+
+// Modifier la quantité d'un achat
+export const updatePurchase = async (purchaseId, newQuantity) => {
+  const quantity = Math.max(1, Math.min(100, parseInt(newQuantity) || 1));
+
+  // Récupérer l'achat pour connaître le customer_id
+  const { data: purchase, error: fetchError } = await supabase
+    .from('purchases')
+    .select('*')
+    .eq('id', purchaseId)
+    .single();
+
+  if (fetchError || !purchase) throw new Error('Achat non trouvé');
+
+  // Mettre à jour la quantité
+  const { error: updateError } = await supabase
+    .from('purchases')
+    .update({ points_added: quantity })
+    .eq('id', purchaseId);
+
+  if (updateError) throw new Error(updateError.message);
+
+  // Recalculer le profil client
+  const result = await recalculateCustomerProfile(purchase.customer_id);
+
+  return { ...result, message: `Achat modifié : ${quantity} bobine(s)` };
+};
+
+// Supprimer un achat
+export const deletePurchase = async (purchaseId) => {
+  // Récupérer l'achat pour connaître le customer_id
+  const { data: purchase, error: fetchError } = await supabase
+    .from('purchases')
+    .select('*')
+    .eq('id', purchaseId)
+    .single();
+
+  if (fetchError || !purchase) throw new Error('Achat non trouvé');
+
+  // Supprimer l'achat
+  const { error: deleteError } = await supabase
+    .from('purchases')
+    .delete()
+    .eq('id', purchaseId);
+
+  if (deleteError) throw new Error(deleteError.message);
+
+  // Recalculer le profil client
+  const result = await recalculateCustomerProfile(purchase.customer_id);
+
+  return { ...result, message: 'Achat supprimé' };
+};
+
 // Obtenir les statistiques
 export const getBusinessStats = async () => {
   const user = getUser();
