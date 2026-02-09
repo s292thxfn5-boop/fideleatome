@@ -1,36 +1,34 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BrowserMultiFormatReader } from '@zxing/library';
 
-function QRScanner({ onScanSuccess, onScanError }) {
+function QRScanner({ onScanSuccess, onScanError, facingMode = 'environment' }) {
   const videoRef = useRef(null);
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState(null);
   const codeReaderRef = useRef(null);
   const hasScannedRef = useRef(false);
+  const streamRef = useRef(null);
 
   useEffect(() => {
     const codeReader = new BrowserMultiFormatReader();
     codeReaderRef.current = codeReader;
+    hasScannedRef.current = false;
 
     const startScanning = async () => {
       try {
         setIsScanning(true);
         setError(null);
 
-        // Lister les caméras disponibles
-        const videoInputDevices = await codeReader.listVideoInputDevices();
+        // Obtenir le stream avec la caméra voulue
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: facingMode } }
+        });
+        streamRef.current = stream;
 
-        if (videoInputDevices.length === 0) {
-          setError('Aucune caméra détectée');
-          return;
-        }
-
-        // Utiliser la première caméra disponible
-        const firstDeviceId = videoInputDevices[0].deviceId;
-
-        // Démarrer le scan
-        await codeReader.decodeFromVideoDevice(
-          firstDeviceId,
+        // Démarrer le scan depuis le stream
+        await codeReader.decodeFromStream(
+          stream,
           videoRef.current,
           (result, err) => {
             if (result && !hasScannedRef.current) {
@@ -38,15 +36,11 @@ function QRScanner({ onScanSuccess, onScanError }) {
                 const rawText = result.getText();
                 console.log('QR Code lu:', rawText);
 
-                // Parser le JSON pour vérifier
                 const qrData = JSON.parse(rawText);
 
-                // Vérifier que c'est bien un QR code FideleAtome
                 if (qrData.app === 'fideleatome' && qrData.type === 'customer') {
                   hasScannedRef.current = true;
-                  // Passer la chaîne brute, pas l'objet parsé
                   onScanSuccess(rawText);
-                  // Arrêter le scanner après un scan réussi
                   codeReader.reset();
                 } else {
                   onScanError('QR code invalide');
@@ -69,13 +63,16 @@ function QRScanner({ onScanSuccess, onScanError }) {
 
     startScanning();
 
-    // Cleanup
     return () => {
       if (codeReaderRef.current) {
         codeReaderRef.current.reset();
       }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
     };
-  }, [onScanSuccess, onScanError]);
+  }, [onScanSuccess, onScanError, facingMode]);
 
   return (
     <div className="w-full max-w-md mx-auto">

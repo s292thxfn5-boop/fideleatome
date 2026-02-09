@@ -12,6 +12,7 @@ function Scanner() {
   const [success, setSuccess] = useState(null);
   const [quantity, setQuantity] = useState(1);
   const [manualId, setManualId] = useState('');
+  const [facingMode, setFacingMode] = useState('environment');
 
   const handleManualSearch = async () => {
     if (!manualId.trim()) return;
@@ -98,6 +99,10 @@ function Scanner() {
     setQuantity(1);
   };
 
+  const switchCamera = () => {
+    setFacingMode(prev => prev === 'environment' ? 'user' : 'environment');
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -132,7 +137,14 @@ function Scanner() {
                 <QRScanner
                   onScanSuccess={handleScanSuccess}
                   onScanError={handleScanError}
+                  facingMode={facingMode}
                 />
+                <button
+                  onClick={switchCamera}
+                  className="mt-3 w-full flex items-center justify-center gap-2 py-2 px-4 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium transition"
+                >
+                  🔄 Retourner la caméra
+                </button>
                 <div className="mt-4 pt-4 border-t">
                   <p className="text-sm text-gray-500 mb-2">Ou entrez l'ID client manuellement :</p>
                   <div className="flex gap-2">
